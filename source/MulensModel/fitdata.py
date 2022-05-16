@@ -8,6 +8,20 @@ from MulensModel.magnificationcurve import MagnificationCurve
 from MulensModel.utils import Utils
 import MulensModel as mm
 
+# Properties owned by the dataset that need to be passed to the model
+# consistently:
+# - bandpass
+# - satellite_coords
+# - time
+# - n_epochs?
+# - good/bad?
+#
+# Properties derived from the model and evaluated for dataset.time:
+# - get_magnification()
+# - get_trajectory()/Trajectory() - must be calculated by get_magnification()
+# - MagnificationCurve()/point lens magnification - must be calculated by get_magnification()
+#
+# Maybe model needs a dictionary
 
 class FitData:
     """

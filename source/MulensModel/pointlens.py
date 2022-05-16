@@ -44,6 +44,9 @@ def get_pspl_magnification(trajectory):
 
     return pspl_magnification
 
+# REFACTOR: Are there any times when one would want to input an arbitrary u
+# rather than u derived from a Trajectory class? If not, a given Model could
+# store u information, although that would tie it to a specific time instance.
 
 class PointLens(object):
     """
