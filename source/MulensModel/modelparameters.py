@@ -4,6 +4,8 @@ import warnings
 
 from MulensModel.uniformcausticsampling import UniformCausticSampling
 
+# REFACTOR: If we refactored this, _valid_parameters would be tied to specific
+# model classes. This would greatly simplify/subdivide the code below.
 
 # For definition of class ModelParameters see below.
 
@@ -208,7 +210,7 @@ class ModelParameters(object):
             ``print(params)``
 
     """
-
+    # REFACTOR: Much of what is below is eliminated by separate subModels.
     def __init__(self, parameters):
         if not isinstance(parameters, dict):
             raise TypeError(
@@ -611,6 +613,8 @@ class ModelParameters(object):
         if 'shear_G' in parameters.keys():
             if not isinstance(parameters['shear_G'], complex):
                 raise TypeError("External shear (shear_G) must be complex")
+
+    # END REFACTOR: Everything above would be heavily affected by the refactor.
 
     def _set_parameters(self, parameters):
         """

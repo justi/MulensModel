@@ -649,6 +649,7 @@ class Model(object):
         """
         times = np.atleast_1d(times)
 
+        # REFACTOR: Why doesn't this use "self.get_trajectory()"
         kwargs_ = {
             'times': times, 'parallax': self._parallax, 'coords': self._coords,
             'satellite_skycoord': self.get_satellite_coords(times)}
@@ -715,6 +716,9 @@ class Model(object):
         Returns : A `:py:class:`~MulensModel.trajectory.Trajectory` object.
 
         """
+        # REFACTOR: This information is needed by both the magnification and
+        # derivative calculations. Thus, it is not good that it gets
+        # recalculated each time.
         kwargs_ = {
             'times': times, 'parallax': self._parallax, 'coords': self._coords,
             'satellite_skycoord': self.get_satellite_coords(times)}

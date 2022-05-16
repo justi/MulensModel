@@ -11,6 +11,8 @@ from sympy.functions.special.elliptic_integrals import elliptic_pi as ellip3
 import MulensModel as mm
 
 
+# REFACTOR: I think get_pspl_magnification should be a stored property because
+# it is needed by both the magnification and gradient calculations.
 def get_pspl_magnification(trajectory):
     """
     This is Paczynski equation, i.e., point-source--point-lens (PSPL)
@@ -241,6 +243,9 @@ class PointLens(object):
         # More accurate calculations can be performed - see Yoo+04 eq. 11 & 12.
         return magnification
 
+    # REFACTOR: Should there be separate models for different LD methods?
+    # No? Because in the binary lens case, you sometimes want to combine
+    # multiple methods and the point lens case should be analogous.
     def get_point_lens_limb_darkening_magnification(
             self, u, pspl_magnification, gamma, direct=False):
         """

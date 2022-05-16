@@ -10,6 +10,8 @@ from MulensModel.pointlens import PointLens, get_pspl_magnification
 from MulensModel.trajectory import Trajectory
 
 
+# REFACTOR: I don't think MagnificationCurve serves any real purpose. Most of
+# its content can be refactored into the appropriate Model classes.
 class MagnificationCurve(object):
     """
     The magnification curve calculated from the model light curve.

@@ -142,9 +142,11 @@ class FitData:
         else:
             satellite_skycoord = self.dataset.satellite_skycoord
 
+        # REFACTOR: clunky and prone to future implementation errors
         magnification_kwargs = {
             'gamma': self.gamma, 'satellite_skycoord': satellite_skycoord}
 
+        # REFACTOR: Separate binary source models would eliminate this.
         if self._model.n_sources == 1:
             mag_matrix = self._model.get_magnification(
                 time=self._dataset.time[select],
@@ -159,6 +161,7 @@ class FitData:
                    "only handle <=2 sources")
             raise NotImplementedError(msg)
 
+        # REFACTOR: Separate binary source models would eliminate this.
         if bad:
             self._data_magnification = mag_matrix
         else:
@@ -176,6 +179,10 @@ class FitData:
                         source][self._dataset.good] = mag_matrix[source]
 
     def _get_xy_qflux(self):
+        # REFACTOR: Separate binary source models would relocate this to the
+        # Model. But, because there can be both 1L2S and 2L2S models, this means
+        # a 2L2S model needs to inherit from BOTH BinaryLens and BinarySource
+        # Models.
         """ Apply a fixed flux ratio. """
         y = self._dataset.flux[self._dataset.good]
         x = np.array(
@@ -187,6 +194,7 @@ class FitData:
         return (x, y)
 
     def _get_xy_individual_fluxes(self):
+        # REFACTOR: See _get_xy_qflux.
         """ Account for source fluxes individually """
         y = self._dataset.flux[self._dataset.good]
 
@@ -235,6 +243,7 @@ class FitData:
         n_epochs = np.sum(self._dataset.good)
         self._calculate_magnifications(bad=False)
 
+        # REFACTOR?
         # Account for source fluxes
         if self.fix_source_flux_ratio is not False:
             self._check_for_flux_ratio_errors()
@@ -604,6 +613,8 @@ class FitData:
 
         return self._chi2_gradient
 
+    # REFACTOR: All of this derivative stuff should be part of the Model.
+    # Also consider gradient for 1L2S models.
     def get_d_A_d_params_for_point_lens_model(self, parameters):
         """
         Calculate d A / d parameters for a point lens model.
@@ -638,6 +649,13 @@ class FitData:
         Returns: :py:class:`~MulensModel.trajectory.Trajectory`
 
         """
+        # REFACTOR: This function gets called multiple times --> inefficient.
+        # But it must remain tied to a _combination_ of the data and the model.
+        # It is not intrinsic to either alone.
+        #
+        # There are several examples of this, e.g. data magnification. This
+        # suggests the need for a separate class for model properties calculated
+        # for the dataset times.
         if self.dataset.ephemerides_file is None:
             return self.model.get_trajectory(self.dataset.time)
         else:
@@ -899,6 +917,8 @@ class FitData:
         """
         derivs = self.FSPLDerivs(self)
         return derivs.get_d_A_d_rho()
+
+    # END REFACTOR: End of stuff that should be refactored into the model.
 
     @property
     def chi2_gradient(self):
