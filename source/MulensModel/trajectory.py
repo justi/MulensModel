@@ -126,6 +126,8 @@ class Trajectory(object):
         """
         return self._y
 
+    # ADD: @property u
+
     @property
     def parallax_delta_N_E(self):
         """

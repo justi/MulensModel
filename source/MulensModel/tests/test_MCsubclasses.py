@@ -176,6 +176,7 @@ class Test_FiniteSourceUniformGould94MC(unittest.TestCase):
         raise NotImplementedError('No tests implemented for get_d_A_d_params.')
 
 
+
 class Test_FiniteSourceLDYoo04MC(unittest.TestCase):
 
     def setUp(self):
@@ -239,6 +240,7 @@ class Test_FiniteSourceLDYoo04MC(unittest.TestCase):
             self.data['Time'], parameters=self.parameters, gamma=self.gamma)
         np.testing.assert_allclose(
             fspl_curve.get_magnification(), self.data['Mag_LD'], rtol=0.0001)
+
 
 class Test_FiniteSourceLDYoo04MC_Derivs(unittest.TestCase):
 

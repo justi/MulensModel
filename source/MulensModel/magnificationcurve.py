@@ -1,6 +1,7 @@
 import math
 import warnings
 
+import MulensModel
 import numpy as np
 
 from MulensModel.binarylens import BinaryLens
@@ -8,6 +9,7 @@ from MulensModel.binarylenswithshear import BinaryLensWithShear
 from MulensModel.modelparameters import ModelParameters
 from MulensModel.pointlens import PointLens, get_pspl_magnification
 from MulensModel.trajectory import Trajectory
+from MulensModel.magnification_curves import pointlensMC
 
 
 # REFACTOR: I don't think MagnificationCurve serves any real purpose. Most of
@@ -180,6 +182,58 @@ class MagnificationCurve(object):
         if len(set(methods)-set_) == 0:
             warnings.warn('no finite-source method is set', UserWarning)
             return
+
+    def _sketch_refactor_get_point_lens_magnification_curves(self):
+        self.magnification_curves = []
+        for i, method in enumerate(
+                self._methods_names):  # This neglects default_magnification method
+            selection = (
+                    (self.dataset.time >= self._methods_epochs[i]) &
+                    (self.dataset.time < self._methods_epochs[i + 1]))
+            trajectory = MulensModel.Trajectory(
+                self.dataset.time[selection], **other_params)
+            if method.lower() == 'point source':
+                mag_curve = pointlensMC.PointLensMagnificationCurve(
+                    trajectory, self.parameters)
+            elif method.lower() == 'finite_source_uniform_Gould94'.lower():
+                mag_curve = pointlensMC.FiniteSourceGould94MagnificationCurve(
+                    trajectory, self.parameters)
+            elif method.lower() == 'finite_source_LD_Yoo04'.lower():
+                mag_curve = pointlensMC.FiniteSourceYoo04MagnificationCurve(
+                    trajectory, self.parameters)
+            else:
+                raise NotImplementedError
+
+            self.magnification_curves.append(mag_curve)
+
+
+    def _sketch_refactor_get_point_lens_magnification(self):
+        """
+        Overview of how get_point_lens_magnification would be different
+        with the new magnification classes.
+        """
+        if self.magnification_curves is None:
+            self._sketch_refactor_get_point_lens_magnification_curves()
+
+        self.magnification = []
+        for mag_curve in self.magnification_curves:
+            self.magnification.append(mag_curve.get_magnification())
+
+        return self.magnification
+
+    def _sketch_refactor_get_d_A_d_params(self, parameters):
+        """
+        Overview of how get_point_lens_magnification would be different
+        with the new magnification classes.
+        """
+        if self.magnification_curves is None:
+            self._sketch_refactor_get_point_lens_magnification_curves()
+
+        self.d_A_d_params = []
+        for mag_curve in self.magnification_curves:
+            self.d_A_d_params.append(mag_curve.get_d_A_d_params(parameters))
+
+        return self.d_A_d_params
 
     def get_point_lens_magnification(self):
         """

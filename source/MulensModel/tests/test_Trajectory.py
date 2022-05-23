@@ -35,3 +35,8 @@ def test_coords_format():
     for trajectory in trajecotories:
         assert np.all(trajectory.x == trajecotories[0].x)
         assert np.all(trajectory.y == trajecotories[0].y)
+
+# ADD Tests:
+# - x, y
+# - u
+# - d_u_d_params
