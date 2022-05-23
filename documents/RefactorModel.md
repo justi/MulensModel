@@ -18,4 +18,10 @@ object with the properties of the model.
 
 - Satellite_skycoord is only meaningful in the context of a Trajectory and the
 only thing needed to calculate it is a set of times and coords. Thus,
-get_satellite_skycoord should be a method of Trajectory, not MulensData.
+get_satellite_skycoord should be a method of Trajectory, not MulensData, and
+Trajectory should take ephemerides_file (not satellite_skycoord) as an argument.
+
+I am a little concerned about the code becoming circular:
+In FitData, we have a dataset and a model. Then, we define a Trajectory from the
+dataset and the model. But then, to get the magnification, we pass that
+trajectory back to the model.
