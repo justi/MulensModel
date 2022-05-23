@@ -183,8 +183,10 @@ class MagnificationCurve(object):
             warnings.warn('no finite-source method is set', UserWarning)
             return
 
-    def _sketch_refactor_get_point_lens_magnification_curves(self):
-        self.magnification_curves = []
+    def _sketch_refactor_get_trajectory(self):
+        # Not sure if I actually need to store the trajectories...
+
+        self.trajectories = []
         for i, method in enumerate(
                 self._methods_names):  # This neglects default_magnification method
             selection = (
@@ -192,20 +194,30 @@ class MagnificationCurve(object):
                     (self.dataset.time < self._methods_epochs[i + 1]))
             trajectory = MulensModel.Trajectory(
                 self.dataset.time[selection], **other_params)
+            self.trajectories.append(trajectory)
+
+        return self.trajectories
+
+    def _sketch_refactor_get_point_lens_magnification_curves(self):
+        if self.trajectories is None:
+            self._sketch_refactor_get_trajectory()
+
+        self.magnification_curves = []
+        for i, method in enumerate(
+                self._methods_names):  # This neglects default_magnification method
             if method.lower() == 'point source':
                 mag_curve = pointlensMC.PointLensMagnificationCurve(
-                    trajectory, self.parameters)
+                    self.trajectories[i], self.parameters)
             elif method.lower() == 'finite_source_uniform_Gould94'.lower():
                 mag_curve = pointlensMC.FiniteSourceGould94MagnificationCurve(
-                    trajectory, self.parameters)
+                    self.trajectories[i], self.parameters)
             elif method.lower() == 'finite_source_LD_Yoo04'.lower():
                 mag_curve = pointlensMC.FiniteSourceYoo04MagnificationCurve(
-                    trajectory, self.parameters)
+                    self.trajectories[i], self.parameters)
             else:
                 raise NotImplementedError
 
             self.magnification_curves.append(mag_curve)
-
 
     def _sketch_refactor_get_point_lens_magnification(self):
         """
