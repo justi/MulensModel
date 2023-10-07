@@ -1,28 +1,28 @@
 from os import path
 
-from MulensModel.binarylens import BinaryLens
-from MulensModel.binarylenswithshear import BinaryLensWithShear
-from MulensModel.caustics import Caustics
-from MulensModel.causticspointwithshear import CausticsPointWithShear
-from MulensModel.causticswithshear import CausticsWithShear
-from MulensModel.coordinates import Coordinates
-from MulensModel.event import Event
-from MulensModel.fitdata import FitData
-from MulensModel.horizons import Horizons
-from MulensModel.limbdarkeningcoeffs import LimbDarkeningCoeffs
-from MulensModel.magnificationcurve import MagnificationCurve
-from MulensModel.model import Model
-from MulensModel.modelparameters import ModelParameters, which_parameters
-from MulensModel.mulensdata import MulensData
-from MulensModel.mulensobjects import *
-from MulensModel.orbits import *
-from MulensModel.pointlens import PointLens, get_pspl_magnification
-from MulensModel.pointlenswithshear import PointLensWithShear
-from MulensModel.pointlensfinitesource import PointLensFiniteSource
-from MulensModel.satelliteskycoord import SatelliteSkyCoord
-from MulensModel.trajectory import Trajectory
-from MulensModel.uniformcausticsampling import UniformCausticSampling
-from MulensModel.utils import MAG_ZEROPOINT, Utils
+from .binarylens import BinaryLens
+from .binarylenswithshear import BinaryLensWithShear
+from .caustics import Caustics
+from .causticspointwithshear import CausticsPointWithShear
+from .causticswithshear import CausticsWithShear
+from .coordinates import Coordinates
+from .event import Event
+from .fitdata import FitData
+from .horizons import Horizons
+from .limbdarkeningcoeffs import LimbDarkeningCoeffs
+from .magnificationcurve import MagnificationCurve
+from .model import Model
+from .modelparameters import ModelParameters, which_parameters
+from .mulensdata import MulensData
+from .mulensobjects import Lens, Source, MulensSystem
+from . import orbits
+from .pointlens import PointLens, get_pspl_magnification
+from .pointlenswithshear import PointLensWithShear
+from .pointlensfinitesource import PointLensFiniteSource
+from .satelliteskycoord import SatelliteSkyCoord
+from .trajectory import Trajectory
+from .uniformcausticsampling import UniformCausticSampling
+from .utils import MAG_ZEROPOINT, Utils
 
 from .version import __version__
 
