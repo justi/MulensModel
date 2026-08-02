@@ -49,7 +49,7 @@ except Exception:
     raise ImportError('\nYou have to install MulensModel first!\n')
 
 
-__version__ = '0.57.1'
+__version__ = '0.59.0'
 
 
 class UlensModelFit(object):
@@ -157,6 +157,13 @@ class UlensModelFit(object):
                   't_E': "16. 19.6"
               }
 
+        extra_parameters: *list of strings*
+            Additional parameters you want to a add to the final output,
+            triangle plot, trace plot, and posterior. They are not fitted themselves
+            but calculated from the fitted parameters. Currently accepted values are:
+            ``lens_semimajor_axis``, ``lens_period``, ``lens_eccentricity``, and ``lens_inclination``.
+            Works only for EMCEE fitting.
+
         model: *dict*
             Additional settings for *MulensModel.Model*. Accepted keys:
 
@@ -186,6 +193,14 @@ class UlensModelFit(object):
             ``'fixed_fluxes'`` - for fixing fluxes in chi2 evaluation. The value of that is a dict with key
             ``'blend'`` or ``'source'`` and corresponding values are also dicts with dataset label as a key and
             flux value to be set as value.
+
+            ``'theta star calculation'`` - for calculation of theta_star based on fluxes. The value is a dict with
+            keys ``'mag X label'``, ``'mag Y label'``, ``'E(X-Y)'``, ``'A_Y'``, and ``{'relation': Adams+18}``
+            where X and Y are filetrs used for calcualtion. Currently this function only uses equations
+            from Adams et al. 2018 with default coefficients for giant stars and (V-K) color.
+
+            References:
+              Adams et al. 2018 - https://ui.adsabs.harvard.edu/abs/2018MNRAS.473.3608A/abstract
 
         fixed_parameters: *dict*
             Provide parameters that will be kept fixed during the fitting
@@ -353,13 +368,14 @@ class UlensModelFit(object):
                 specify gaussian prior for parallax components. Parameters
                 *mean* and *sigma* are floats.
 
+                ``'compare theta star': True`` - gaussian prior taking into account theta_star parameter calculated by
+                two diffferent methods. Assumes the results differ by a normal distribution with 0 mean and relative
+                sigma of 0.05. Requires parallax and orbital motion int the model and photometry in 2 different bands.
+
             References:
-              Mao & Paczynski 1996 -
-              https://ui.adsabs.harvard.edu/abs/1996ApJ...473...57M/abstract
-              Mroz et al. 2017 -
-              https://ui.adsabs.harvard.edu/abs/2017Natur.548..183M/abstract
-              Mroz et al. 2020 -
-              https://ui.adsabs.harvard.edu/abs/2020ApJS..249...16M/abstract
+              Mao & Paczynski 1996 - https://ui.adsabs.harvard.edu/abs/1996ApJ...473...57M/abstract
+              Mroz et al. 2017 - https://ui.adsabs.harvard.edu/abs/2017Natur.548..183M/abstract
+              Mroz et al. 2020 - https://ui.adsabs.harvard.edu/abs/2020ApJS..249...16M/abstract
 
             ``'posterior parsing'`` - additional settings that allow modifying posterior after it's calculated.
                 Possible values:
@@ -441,7 +457,7 @@ class UlensModelFit(object):
     def __init__(
             self, photometry_files,
             starting_parameters=None, prior_limits=None, model=None,
-            fixed_parameters=None,
+            fixed_parameters=None, extra_parameters=None,
             min_values=None, max_values=None, fitting_parameters=None,
             fit_constraints=None, plots=None, other_output=None,
             fit_method=None
@@ -452,6 +468,7 @@ class UlensModelFit(object):
         self._prior_limits = prior_limits
         self._model_parameters = model
         self._fixed_parameters = fixed_parameters
+        self._extra_parameters = extra_parameters
         self._min_values = min_values
         self._max_values = max_values
         self._fitting_parameters = fitting_parameters
@@ -462,6 +479,7 @@ class UlensModelFit(object):
 
         self._which_task()
         self._set_default_parameters()
+
         if self._task == 'fit':
             if self._fit_method is None:
                 self._guess_fitting_method()
@@ -587,6 +605,9 @@ class UlensModelFit(object):
             pi_E_E='\\pi_{{\\rm E},E}', s='s', q='q', alpha='\\alpha',
             ds_dt='ds/dt', dalpha_dt='d\\alpha/dt',
             s_z='s_{z}', ds_z_dt='ds_{z}/dt', a_s='a_{s}',
+            lens_semimajor_axis='a', lens_period='P',
+            lens_eccentricity='e', lens_inclination='I',
+            theta_E='\\theta_{E}',
             x_caustic_in='x_{\\rm caustic,in}',
             x_caustic_out='x_{\\rm caustic,out}',
             t_caustic_in='t_{\\rm caustic,in}',
@@ -1104,7 +1125,7 @@ class UlensModelFit(object):
 
         allowed = {
             'coords', 'default method', 'methods', 'methods parameters', 'methods source 1', 'methods source 2',
-            'parameters', 'values', 'limb darkening u', 'fixed_fluxes'}
+            'parameters', 'values', 'limb darkening u', 'fixed_fluxes', 'theta star calculation'}
         keys = set(self._model_parameters.keys())
         not_allowed = keys - allowed
         if len(not_allowed) > 0:
@@ -1131,6 +1152,73 @@ class UlensModelFit(object):
         if 'pi_E_E' in all_parameters or 'pi_E_N' in all_parameters:
             if 'coords' not in self._model_parameters:
                 raise ValueError("Parallax model requires model['coords'].")
+        if 'theta star calculation' in self._model_parameters:
+            self._check_and_parse_theta_star()
+
+    def _check_and_parse_theta_star(self):
+        """
+        Check values of self._model_parameters['theta star calculation'] and parse that information; set defaults
+        """
+        self._get_bands_for_theta_star_calculation()
+        self._check_theta_star_parameters()
+        self._set_theta_star_defaults()
+
+    def _set_theta_star_defaults(self):
+        """
+        Set default values for theta_* calculation.
+        In future, the parameters presented here may be exposed to the user.
+        """
+        self._model_parameters['theta star calculation']['relative sigma'] = 0.05
+        self._ref_stars = 'giants'
+        self._ref_color = 'V-K'
+        self._BB88_warn = False
+
+    def _get_bands_for_theta_star_calculation(self):
+        """
+        Find what are the bandpasses used for theta_* calculation
+        """
+        reddening = []
+        for key, value in self._model_parameters['theta star calculation'].items():
+            if key[0] == 'E':
+                reddening.append(key)
+
+        if len(reddening) != 1:
+            raise ValueError(
+                "Wrong 'theta star calculation' keys: " + str(self._model_parameters['theta star calculation']))
+
+        if reddening[0][:2] != "E(" or reddening[0][-1] != ")":
+            raise ValueError("Wrong format of extinction: " + str(reddening[0]))
+        self._reddening_label = reddening[0]
+        self._theta_star_required_keys = {reddening[0]}
+        self._base_color = reddening[0][2:-1]
+
+        bands = self._base_color.split("-")
+        if len(bands) != 2:
+            raise ValueError("Wrong format of extinction: " + str(reddening[0]))
+
+        self._label_1 = self._get_label_format_for_theta_star_calculation(bands[0])
+        self._dataset1 = self._model_parameters['theta star calculation'][self._label_1]
+        self._label_2 = self._get_label_format_for_theta_star_calculation(bands[1])
+        self._dataset2 = self._model_parameters['theta star calculation'][self._label_2]
+        self._get_required_theta_star_calculation_keys(bands)
+
+    def _get_required_theta_star_calculation_keys(self, bands):
+        self._extinction_label = "A_{:}".format(bands[1])
+        keys = ["relation", self._label_1, self._label_2, self._extinction_label]
+        self._theta_star_required_keys.update(keys)
+
+    def _get_label_format_for_theta_star_calculation(self, band):
+        """change band to a str provided by the user"""
+        return "mag {:} label".format(band)
+
+    def _check_theta_star_parameters(self):
+        """
+        Check values of self._model_parameters['theta star calculation']
+        """
+        difference = self._theta_star_required_keys.symmetric_difference(
+                   self._model_parameters['theta star calculation'])
+        if len(difference) > 0:
+            raise KeyError("'theta star calculation' settings issue: {:}".format(difference))
 
     def _check_other_fit_parameters(self):
         """
@@ -1295,6 +1383,9 @@ class UlensModelFit(object):
                 out = '{:} vs {:}'.format(len(self._datasets), len(self._residuals_files))
                 raise ValueError('The number of datasets and files for residuals output do not match: ' + out)
 
+        if 'theta star calculation' in self._model_parameters:
+            self._check_theta_star_calculation_values()
+
     def _get_1_dataset(self, file_, kwargs):
         """
         Construct a single dataset and possibly rescale uncertainties in it.
@@ -1318,7 +1409,7 @@ class UlensModelFit(object):
 
         if dataset.ephemerides_file is not None:
             self._satellites_names.append(dataset.plot_properties['label'])
-            self._satellites_colors.append(dataset.plot_properties['color'])
+            self._satellites_colors.append(dataset.plot_properties.get('color', 'blue'))
 
         return dataset
 
@@ -1402,6 +1493,15 @@ class UlensModelFit(object):
             raise ValueError(
                 'Something wrong with provided bad flags for dataset ' + dataset.plot_properties['label'] + '\n ' +
                 str(bad_bool[0]))
+
+    def _check_theta_star_calculation_values(self):
+        """
+        Checks the values in the theta star calculation dict
+        """
+        for key in [self._label_1, self._label_2]:
+            value = self._model_parameters['theta star calculation'][key]
+            if value not in self._data_labels:
+                raise KeyError("No dataset of this name: {:}".format(value))
 
     def _check_ulens_model_parameters(self):
         """
@@ -1495,6 +1595,8 @@ class UlensModelFit(object):
                             ValueError('internal error: ' + str(key))
 
         self._fit_parameters_latex = [('$' + conversion[key] + '$') for key in self._fit_parameters]
+        if self._extra_parameters is not None:
+            self._extra_parameters_latex = [('$' + conversion[key] + '$') for key in self._extra_parameters]
 
     def _parse_fitting_parameters(self):
         """
@@ -1621,7 +1723,6 @@ class UlensModelFit(object):
                                      name + ") exists and is a directory")
             self._posterior_file_name = name[:-4]
             self._posterior_file_fluxes = None
-
         if 'posterior file fluxes' in settings:
             not_changed = ['all', None]
             if settings['posterior file fluxes'] in not_changed:
@@ -1872,6 +1973,7 @@ class UlensModelFit(object):
         Parse the fitting constraints that are not simple limits on parameters
         """
         self._prior_t_E = None
+        self._prior_theta_star = None
         self._priors = None
 
         if self._fit_constraints is None:
@@ -2195,7 +2297,12 @@ class UlensModelFit(object):
                 if settings[2] < 0.:
                     raise ValueError('sigma cannot be negative: ' + words[2])
                 priors[key] = settings
-
+            elif key == 'compare theta star':
+                if value is True:
+                    self._prior_theta_star = value
+                    self._check_theta_star_calculation()
+                elif value is not False:
+                    raise ValueError("wrong 'compare theta star' value: {:}".format(value))
             else:
                 raise KeyError("Unrecognized key in fit_constraints/prior: " + key)
 
@@ -2229,6 +2336,14 @@ class UlensModelFit(object):
                 if parameter not in self._fit_parameters:
                     raise ValueError("Error - you can calculate " + key + " function only of a parameter which is "
                                      "fitted, not: " + parameter)
+
+    def _check_theta_star_calculation(self):
+        """
+        Checks if theta star calculation is included in model if theta star comparion is True.
+        """
+        if self._prior_theta_star is not None:
+            if 'theta star calculation' not in self._model_parameters:
+                raise ValueError("Theta star comparison requires model['theta star calculation'].")
 
     def _get_no_of_dataset(self, label):
         """
@@ -2721,6 +2836,10 @@ class UlensModelFit(object):
         NOTE: we're using np.log(), i.e., natural logarithms.
         """
         ln_prior = self._ln_prior(theta)
+        if self._extra_parameters is not None:
+            if self._fit_method != 'EMCEE':
+                raise NotImplementedError("If extra parameters are present fit method has to be EMCEE.")
+
         if not np.isfinite(ln_prior):
             return self._return_ln_prob(-np.inf)
 
@@ -2749,18 +2868,36 @@ class UlensModelFit(object):
         used to parse output of _ln_prob() in order to make that function
         shorter
         """
+        out = [value]
         if value == -np.inf:
             if self._return_fluxes:
-                return (value, [0.] * self._n_fluxes)
+                out += [0.] * self._n_fluxes
             else:
-                return value
+                pass
         else:
             if self._return_fluxes:
                 if fluxes is None:
                     raise ValueError('Unexpected error!')
-                return (value, fluxes)
+                out += fluxes
             else:
-                return value
+                pass
+        extras = self._get_extras()
+
+        out += extras
+        return out
+
+    def _get_extras(self):
+        """
+        Gives parameters specifed in extra_parameters. Must return None or list.
+        """
+        extras = []
+        if self._extra_parameters is not None:
+            for par in self._extra_parameters:
+                try:
+                    extras.append(getattr(self._model.parameters, par))
+                except Exception:
+                    raise AttributeError("Wrong parameter name in extra parameters: {:}".format(par))
+        return extras
 
     def _set_model_parameters(self, theta):
         """
@@ -2834,6 +2971,9 @@ class UlensModelFit(object):
         if self._prior_t_E is not None:
             self._set_model_parameters(theta)
             ln_prior += self._ln_prior_t_E()
+        if self._prior_theta_star is not None:
+            self._set_model_parameters(theta)
+            ln_prior += self._ln_prior_theta_star()
         if self._fit_method == "UltraNest":
             return ln_prior
 
@@ -2899,6 +3039,126 @@ class UlensModelFit(object):
             if self._prior_t_E == 'Mroz+20':
                 out += 3. * math.log(10) * (x - self._prior_t_E_data['x_min'])
             return out
+
+    def _ln_prior_theta_star(self):
+        """
+        Get log prior for theta_star of current model. This function is executed
+        if there is theta star compare.
+        """
+        reference = self._get_theta_star_from_flux()
+        delta_theta = self._get_theta_star() - reference
+        sigma = reference * self._model_parameters['theta star calculation']['relative sigma']
+        out = self._get_ln_normal(delta_theta, sigma)
+        return out
+
+    def _get_theta_star_from_flux(self):
+        """
+        Calculates the radius of the source star based on the relation given.
+        Right now default is Adams+18 for color V-K, and giant stars as reference.
+        Reference: https://ui.adsabs.harvard.edu/abs/2018MNRAS.473.3608A/abstract
+        """
+        if self._model.n_sources != 1:
+            raise NotImplementedError("""Currently calculating get_theta_star_from_flux only works or a single source
+                                     because _get_mag_from_fluxes does not consider binary sources.""")
+
+        if self._model_parameters['theta star calculation']['relation'] == 'Adams+18':
+            theta_star_flux = self._get_theta_star_Adams18()
+        else:
+            raise ValueError("Currently only Adams+18 accepted in 'theta star calculation' -> 'relation'")
+
+        return theta_star_flux
+
+    def _get_theta_star_Adams18(self):
+        """
+        Calculates the radius of the source based on
+        equations 2 and 3 from Adams et al. 2018.
+        """
+        PQ_0_S = self._get_color_BB88()
+        Q_0_S = self._get_mag_from_fluxes()[1] - PQ_0_S
+        logtheta_LD = self._get_theta_LD_Adams18(PQ_0_S) - 0.2*Q_0_S
+        theta_star = 1/2 * 10**logtheta_LD
+        return theta_star
+
+    def _get_mag_from_fluxes(self):
+        """
+        Calculates magnitude of the source in 2 bands
+        and corrects them for extinction.
+        """
+        fluxes = self._get_fluxes()
+        no_dataset_1 = self._get_no_of_dataset(self._dataset1)
+        no_dataset_2 = self._get_no_of_dataset(self._dataset2)
+        reddening = self._model_parameters['theta star calculation'][self._reddening_label]
+        extinction = self._model_parameters['theta star calculation'][self._extinction_label]
+        # to include binary sources correct the 2 lines below
+        flux1 = fluxes[2 * no_dataset_1]
+        flux2 = fluxes[2 * no_dataset_2]
+        mag1_S = mm.Utils.get_mag_from_flux(flux1)
+        mag2_S = mm.Utils.get_mag_from_flux(flux2)
+        color_S_0 = mag1_S - mag2_S - reddening
+        mag1_S_0 = color_S_0 + mag2_S - extinction
+        return color_S_0, mag1_S_0
+
+    def _get_color_BB88(self):
+        """
+        Calculates ref source color from base source color based on table 3 from
+        Bessell and Brett 1988.
+        """
+        colors_BB = {'giants': {'V-I': [0.81, 0.91, 0.94, 0.94, 1.0, 1.08, 1.17, 1.36,
+                                        1.5, 1.63, 1.78, 1.9, 2.05, 2.25, 2.55, 3.05],
+                                'V-K': [1.75, 2.05, 2.15, 2.16, 2.31, 2.5, 2.7, 3.0, 3.26,
+                                        3.6, 3.85, 4.05, 4.3, 4.64, 5.1, 5.96]}}
+        color_in = self._get_mag_from_fluxes()[0]
+        ref_stars = colors_BB[self._ref_stars]
+        ref_stars_and_ref_color = ref_stars[self._ref_color]
+        ref_stars_and_base_color = ref_stars[self._base_color]
+        if color_in < ref_stars_and_base_color[0] or color_in > ref_stars_and_base_color[-1]:
+            if not self._BB88_warn:
+                msg = ("Input value of color: {:} out of bounds, the output color: {:} will default "
+                       "to the first or last value from table 3"
+                       "Bessell and Brett 1988".format(self._base_color, self._ref_color))
+                warnings.warn(msg)
+                self._BB88_warn = True
+        if self._base_color == self._ref_color:
+            return color_in
+        else:
+            color_out = np.interp(color_in, ref_stars_and_base_color, ref_stars_and_ref_color)
+            return color_out
+
+    def _get_theta_LD_Adams18(self, x):
+        """
+        Calculates polymonial from Adams et al. 2018.
+        Uses coefficients from table 3.
+        """
+        table3 = {'giants': {'V-K': {'c0': 0.562, 'c1': 0.051}, 'V-H': {'c0': 0.532, 'c1': 0.076}}}
+        ref_stars = table3[self._ref_stars]
+        ref_color = ref_stars[self._ref_color]
+        out = ref_color['c0'] + ref_color['c1']*x
+        return out
+    
+    def _get_theta_E(self):
+        """
+        Calculates theta_E from third Kepler law.
+        """
+        period = self._model.parameters.lens_period
+        kappa = 8.14385328  # [mas/M_sun]
+        pi_E = self._model.parameters.pi_E_mag
+        a = self._model.parameters.lens_semimajor_axis
+        theta_E = period/((kappa*pi_E)**(1/2) * a**(3/2))
+        return theta_E
+
+    def _get_theta_star(self):
+        """
+        Calculates theta_star from theta_E and rho.
+        """
+        theta_star = self._get_theta_E() * self._model.parameters.rho
+        return theta_star
+
+    def _get_ln_normal(self, x, sigma):
+        """
+        Normal distribution with mu=0.
+        """
+        out = np.log(1/(np.sqrt(2 * np.pi * sigma**2))) - (x**2 / (2 * sigma**2))
+        return out
 
     def _ln_like(self, theta):
         """
@@ -3477,6 +3737,10 @@ class UlensModelFit(object):
             self._print_yaml_results(self._samples_flat)
         self._shift_t_0_in_samples()
 
+        if self._extra_parameters:
+            print("Extra parameters:")
+            self._print_results(self._get_extras_flat(), names='extras')
+
         if self._return_fluxes:
             print("Fitted fluxes (source and blending):")
             self._print_results(self._flux_samples_flat, names='fluxes')
@@ -3515,16 +3779,43 @@ class UlensModelFit(object):
         """
         prepare values to be printed for EMCEE fitting
         """
-        try:
-            blobs = np.array(self._sampler.blobs)
-        except Exception as exception:
-            raise ValueError('There was some issue with blobs:\n' +
-                             str(exception))
-        blob_sampler = np.transpose(blobs, axes=(1, 0, 2))
-        blob_samples = blob_sampler[:, self._fitting_parameters['n_burn']:, :]
+        blob_samples = self._get_fluxes_3D(self._n_fluxes)
         blob_samples = blob_samples.reshape((-1, self._n_fluxes))
 
         return blob_samples
+
+    def _get_fluxes_3D(self, n_fluxes):
+        """
+        Get values of fluxes from blobs.
+        """
+        try:
+            blobs = np.array(self._sampler.blobs)
+        except Exception as exception:
+            raise ValueError('There was some issue with blobs:\n' + str(exception))
+        fluxes_3D = np.transpose(blobs, axes=(1, 0, 2))[:, self._fitting_parameters['n_burn']:, :n_fluxes]
+
+        return fluxes_3D
+
+    def _get_extras_flat(self):
+        """
+        Reshape extra array to 2D.
+        """
+        samples = self._get_extras_3D()
+        samples_flat = samples.reshape((-1, len(self._extra_parameters)))
+        return samples_flat
+
+    def _get_extras_3D(self):
+        """
+        Extract 3D values of extras from blobs.
+        """
+        try:
+            blobs = np.array(self._sampler.blobs)
+        except Exception as exception:
+            raise ValueError('There was some issue with blobs:\n' + str(exception))
+        samples_3D = np.transpose(
+                     blobs, axes=(1, 0, 2))[:, self._fitting_parameters['n_burn']:, -len(self._extra_parameters):]
+
+        return samples_3D
 
     def _print_results(self, data, names="parameters", mode=None):
         """
@@ -3536,6 +3827,8 @@ class UlensModelFit(object):
             if self._flux_names is None:
                 self._flux_names = self._get_fluxes_names_to_print()
             ids = self._flux_names
+        elif names == "extras":
+            ids = self._extra_parameters
         else:
             raise ValueError('internal bug')
 
@@ -3750,9 +4043,15 @@ class UlensModelFit(object):
         """
         n_burn = self._fitting_parameters.get('n_burn', 0)
         samples = self._sampler.chain[:, n_burn:, :]
+        if self._extra_parameters is not None:
+            samples = np.dstack((samples, self._get_extras_3D()))
         if self._posterior_file_fluxes is not None:
-            blobs = np.array(self._sampler.blobs)
-            blobs = np.transpose(blobs, axes=(1, 0, 2))[:, n_burn:, :]
+            if self._posterior_file_fluxes == 'all':
+                n_fluxes = self._n_fluxes
+            else:
+                n_fluxes = len(self._posterior_file_fluxes)
+
+            blobs = self._get_fluxes_3D(n_fluxes)
             if self._posterior_file_fluxes == 'all':
                 pass
             elif isinstance(self._posterior_file_fluxes, list):
@@ -4019,12 +4318,24 @@ class UlensModelFit(object):
         """
         Prepare samples that will be plotted on triangle plot
         """
+        if self._extra_parameters is not None:
+            return np.concatenate((self._samples_flat, self._get_extras_flat()), axis=1)
         return self._samples_flat
+
+    def _get_samples_for_trace_plot(self):
+        """
+        Prepare samples that will be plotted on trace plot
+        """
+        if self._extra_parameters is not None:
+            return np.dstack((self._samples, self._get_extras_3D()))
+        return self._samples
 
     def _get_labels_for_triangle_plot(self):
         """
         provide list of labels to be used by triangle plot
         """
+        if self._extra_parameters is not None:
+            return self._fit_parameters_latex + self._extra_parameters_latex
         return self._fit_parameters_latex
 
     def _save_figure(self, file_name, figure=None, dpi=None):
@@ -4065,34 +4376,48 @@ class UlensModelFit(object):
         margins = {'left': 0.13, 'right': 0.97, 'top': 0.98, 'bottom': 0.05}
 
         n_grid = self._n_fit_parameters
-        if len(self._fit_parameters_latex) != n_grid:
-            msg = "This should never happen: {:} {:}"
-            raise ValueError(
-                msg.format(len(self._fit_parameters_latex), n_grid))
-        grid = gridspec.GridSpec(n_grid, 1, hspace=0)
+        if self._extra_parameters is not None:
+            n_grid += len(self._extra_parameters)
 
+        labels = self._get_labels_for_triangle_plot()
+        data = self._get_samples_for_trace_plot()
+        if len(labels) != n_grid:
+            msg = "This should never happen: {:} {:}"
+            raise ValueError(msg.format(len(labels), n_grid))
+
+        grid = gridspec.GridSpec(n_grid, 1, hspace=0)
         plt.figure(figsize=figure_size)
         plt.subplots_adjust(**margins)
-        x_vector = np.arange(self._samples.shape[1])
 
-        for (i, latex_name) in enumerate(self._fit_parameters_latex):
+        self._make_trace_plot_panels(labels, grid, data, alpha)
+
+        plt.xlabel('step count')
+
+        self._save_figure(self._plots['trace'].get('file'))
+
+    def _make_trace_plot_panels(self, labels, grid, data, alpha):
+        """
+        Make panels in the trace plot, i.e., run the main loop.
+        """
+        x_vector = np.arange(data.shape[1])
+
+        for (i, latex_name) in enumerate(labels):
             if i == 0:
                 plt.subplot(grid[i])
                 ax0 = plt.gca()
             else:
                 plt.gcf().add_subplot(grid[i], sharex=ax0)
-            plt.ylabel(latex_name)
-            for j in range(self._samples.shape[0]):
-                plt.plot(x_vector, self._samples[j, :, i], alpha=alpha)
-            plt.xlim(0, self._samples.shape[1])
-            plt.gca().tick_params(axis='both', which='both', direction='in',
-                                  top=True, right=True)
-            if i != self._n_fit_parameters - 1:
-                plt.setp(plt.gca().get_xticklabels(), visible=False)
-            plt.gca().set_prop_cycle(None)
-        plt.xlabel('step count')
 
-        self._save_figure(self._plots['trace'].get('file'))
+            plt.ylabel(latex_name)
+            for j in range(data.shape[0]):
+                plt.plot(x_vector, data[j, :, i], alpha=alpha)
+
+            plt.xlim(0, data.shape[1])
+            plt.gca().tick_params(axis='both', which='both', direction='in', top=True, right=True)
+            if i != len(labels) - 1:
+                plt.setp(plt.gca().get_xticklabels(), visible=False)
+
+            plt.gca().set_prop_cycle(None)
 
     def _best_model_plot(self):
         """
